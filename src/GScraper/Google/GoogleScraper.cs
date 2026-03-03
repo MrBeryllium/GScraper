@@ -28,7 +28,7 @@ public class GoogleScraper : IDisposable
     /// Initializes a new instance of the <see cref="GoogleScraper"/> class.
     /// </summary>
     public GoogleScraper()
-        : this(new HttpClient())
+        : this(new HttpClient(new HttpClientHandler { UseCookies = true, AllowAutoRedirect = true }))
     {
     }
 
@@ -59,9 +59,11 @@ public class GoogleScraper : IDisposable
         _httpClient.BaseAddress = apiEndpoint;
 
         if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
-        {
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
-        }
+
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.5");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0OTA3Nzk3MjMaAmVuIAEaBgiA_LysBg");
     }
 
     /// <summary>
@@ -87,8 +89,8 @@ public class GoogleScraper : IDisposable
         GScraperGuards.NotNull(query, nameof(query));
 
         var uri = new Uri(BuildImageQuery(query, safeSearch, size, color, type, time, license, language), UriKind.Relative);
+        Console.WriteLine($"Name of query for image search: {query}");
         byte[] bytes = await _httpClient.GetByteArrayAsync(uri).ConfigureAwait(false);
-
         var images = JsonSerializer.Deserialize(bytes.AsSpan(5, bytes.Length - 5), GoogleImageSearchResponseContext.Default.GoogleImageSearchResponse)!.Ischj.Metadata;
         images?.RemoveAll(static x => !x.Url.StartsWith("http"));
 
@@ -98,8 +100,9 @@ public class GoogleScraper : IDisposable
     private static string BuildImageQuery(string query, SafeSearchLevel safeSearch, GoogleImageSize size, string? color,
         GoogleImageType type, GoogleImageTime time, string? license, string? language)
     {
-        string url = $"?q={Uri.EscapeDataString(query)}&tbm=isch&asearch=isch&async=_fmt:json,p:1&tbs=";
-
+        //string url = $"?q={Uri.EscapeDataString(query)}&tbm=isch&asearch=isch&async=_fmt:json,p:1&tbs=";
+        string url = $"?q={Uri.EscapeDataString(query)}&asearch=isch&async=_fmt:json,p:1&tbs=";
+        
         url += size == GoogleImageSize.Any ? ',' : $"isz:{(char)size},";
         url += string.IsNullOrEmpty(color) ? ',' : $"ic:{color},";
         url += type == GoogleImageType.Any ? ',' : $"itp:{type.ToString().ToLowerInvariant()},";
@@ -117,7 +120,18 @@ public class GoogleScraper : IDisposable
 
         return url;
     }
-
+    
+    public async Task<string> DebugGetRawResponse(string query)
+    {
+        var path = BuildImageQuery(query, SafeSearchLevel.Off, GoogleImageSize.Any, null, GoogleImageType.Any, GoogleImageTime.Any, null, null);
+        var fullUrl = new Uri(_httpClient.BaseAddress!, path);
+        Console.WriteLine($"Full URL: {fullUrl}");
+    
+        var response = await _httpClient.GetAsync(fullUrl);
+        Console.WriteLine($"Status: {response.StatusCode}");
+        return await response.Content.ReadAsStringAsync();
+    }
+    
     /// <inheritdoc />
     public void Dispose()
     {

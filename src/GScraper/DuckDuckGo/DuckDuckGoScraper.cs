@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -63,15 +64,20 @@ public class DuckDuckGoScraper : IDisposable
     {
         GScraperGuards.NotNull(client, nameof(client));
         GScraperGuards.NotNull(apiEndpoint, nameof(apiEndpoint));
-        
-        _httpClient.BaseAddress = apiEndpoint;
-        
-        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
-        {
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
-        }
 
-        _httpClient.DefaultRequestHeaders.Referrer ??= _httpClient.BaseAddress;
+        _httpClient.BaseAddress = apiEndpoint; // set this FIRST
+
+        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
+
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Referer", "https://duckduckgo.com/");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json, text/javascript, */*; q=0.01");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
+        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+
     }
 
     /// <summary>
@@ -132,7 +138,17 @@ public class DuckDuckGoScraper : IDisposable
     
     private async Task<string> GetTokenAsync(string query)
     {
-        byte[] bytes = await _httpClient.GetByteArrayAsync(new Uri($"?q={Uri.EscapeDataString(query)}", UriKind.Relative)).ConfigureAwait(false);
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"?q={Uri.EscapeDataString(query)}", UriKind.Relative));
+        var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
+    
+        // Grab those cookies
+        if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
+        {
+            _httpClient.DefaultRequestHeaders.Remove("Cookie");
+            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", string.Join("; ", cookies));
+        }
+    
+        byte[] bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
         return GetToken(bytes);
     }
     
@@ -159,7 +175,37 @@ public class DuckDuckGoScraper : IDisposable
         return Encoding.UTF8.GetString(sliced[..endIndex].ToArray());
 #endif
     }
+    public async Task<string> DebugGetImages(string query)
+    {
+        // Step 1: get token
+        byte[] bytes = await _httpClient.GetByteArrayAsync(new Uri($"?q={Uri.EscapeDataString(query)}", UriKind.Relative));
+        string token = GetToken(bytes);
+        Console.WriteLine($"Token: {token}");
 
+        // Step 2: try the image request
+        var uri = $"i.js?l=us-en&o=json&q={Uri.EscapeDataString(query)}&vqd={token}&f=,,,,,&p=-1";
+        Console.WriteLine($"Image URL: {_httpClient.BaseAddress}{uri}");
+    
+        var response = await _httpClient.GetAsync(new Uri(uri, UriKind.Relative));
+        Console.WriteLine($"Image step status: {response.StatusCode}");
+        return await response.Content.ReadAsStringAsync();
+    }
+    public async Task<string> DebugGetRawHtml(string query)
+    {
+        var response = await _httpClient.GetAsync(new Uri($"?q={Uri.EscapeDataString(query)}", UriKind.Relative));
+        Console.WriteLine($"Token step status: {response.StatusCode}");
+        var html = await response.Content.ReadAsStringAsync();
+    
+        // Search for vqd in whatever format it might be now
+        var vqdIndex = html.IndexOf("vqd");
+        if (vqdIndex != -1)
+            Console.WriteLine($"VQD context: {html.Substring(vqdIndex, Math.Min(100, html.Length - vqdIndex))}");
+        else
+            Console.WriteLine("VQD not found in response");
+        
+        return html;
+    }
+    
     /// <inheritdoc />
     public void Dispose()
     {
