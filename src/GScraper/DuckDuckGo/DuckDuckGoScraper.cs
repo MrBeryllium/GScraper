@@ -65,7 +65,7 @@ public class DuckDuckGoScraper : IDisposable
         GScraperGuards.NotNull(client, nameof(client));
         GScraperGuards.NotNull(apiEndpoint, nameof(apiEndpoint));
 
-        _httpClient.BaseAddress = apiEndpoint; // set this FIRST
+        _httpClient.BaseAddress = apiEndpoint;
 
         if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);

@@ -89,7 +89,7 @@ public class GoogleScraper : IDisposable
         GScraperGuards.NotNull(query, nameof(query));
 
         var uri = new Uri(BuildImageQuery(query, safeSearch, size, color, type, time, license, language), UriKind.Relative);
-        Console.WriteLine($"Name of query for image search: {query}");
+
         byte[] bytes = await _httpClient.GetByteArrayAsync(uri).ConfigureAwait(false);
         var images = JsonSerializer.Deserialize(bytes.AsSpan(5, bytes.Length - 5), GoogleImageSearchResponseContext.Default.GoogleImageSearchResponse)!.Ischj.Metadata;
         images?.RemoveAll(static x => !x.Url.StartsWith("http"));
