@@ -27,7 +27,7 @@ public class DuckDuckGoScraper : IDisposable
 
     private static ReadOnlySpan<byte> TokenStart => "vqd=\""u8;
 
-    private const string _defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36";
+    private const string _defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
     private static  readonly Uri _defaultBaseAddress = new(DefaultApiEndpoint);
 
     private readonly HttpClient _httpClient;
@@ -65,19 +65,45 @@ public class DuckDuckGoScraper : IDisposable
         GScraperGuards.NotNull(client, nameof(client));
         GScraperGuards.NotNull(apiEndpoint, nameof(apiEndpoint));
 
-        _httpClient.BaseAddress = apiEndpoint;
+        if (client.BaseAddress is null)
+        {
+            try
+            {
+                client.BaseAddress = apiEndpoint;
+            }
+            catch (InvalidOperationException)
+            {
+                // HttpClient already started a request, can't set BaseAddress anymore.
+                // We'll use absolute URLs instead.
+            }
+        }
 
-        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
+        if (client.DefaultRequestHeaders.UserAgent.Count == 0)
+        {
+            try
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
+            }
+            catch (InvalidOperationException)
+            {
+                // HttpClient already started a request, can't modify headers anymore.
+            }
+        }
 
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Referer", "https://duckduckgo.com/");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json, text/javascript, */*; q=0.01");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
-
+        try
+        {
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Referer", "https://duckduckgo.com/");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("X-Requested-With", "XMLHttpRequest");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "application/json, text/javascript, */*; q=0.01");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Dest", "empty");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Mode", "cors");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+        }
+        catch (InvalidOperationException)
+        {
+            // HttpClient already started a request, can't modify headers anymore.
+        }
     }
 
     /// <summary>
@@ -107,7 +133,7 @@ public class DuckDuckGoScraper : IDisposable
         GScraperGuards.ArgumentInRange(query.Length, MaxQueryLength, nameof(query), $"The query cannot be larger than {MaxQueryLength}.");
 
         string token = await GetTokenAsync(query).ConfigureAwait(false);
-        var uri = new Uri(BuildImageQuery(token, query, safeSearch, time, size, color, type, layout, license, region), UriKind.Relative);
+        var uri = new Uri(_httpClient.BaseAddress ?? _defaultBaseAddress, BuildImageQuery(token, query, safeSearch, time, size, color, type, layout, license, region));
 
         using var stream = await _httpClient.GetStreamAsync(uri).ConfigureAwait(false);
 
@@ -138,14 +164,21 @@ public class DuckDuckGoScraper : IDisposable
     
     private async Task<string> GetTokenAsync(string query)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"?q={Uri.EscapeDataString(query)}", UriKind.Relative));
+        var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_httpClient.BaseAddress ?? _defaultBaseAddress, $"?q={Uri.EscapeDataString(query)}"));
         var response = await _httpClient.SendAsync(request).ConfigureAwait(false);
     
         // Grab those cookies
         if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
         {
-            _httpClient.DefaultRequestHeaders.Remove("Cookie");
-            _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", string.Join("; ", cookies));
+            try
+            {
+                _httpClient.DefaultRequestHeaders.Remove("Cookie");
+                _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", string.Join("; ", cookies));
+            }
+            catch (InvalidOperationException)
+            {
+                // HttpClient already started a request, can't modify headers anymore.
+            }
         }
     
         byte[] bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);

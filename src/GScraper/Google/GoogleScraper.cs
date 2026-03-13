@@ -18,7 +18,8 @@ public class GoogleScraper : IDisposable
     /// </summary>
     public const string DefaultApiEndpoint = "https://www.google.com/search";
 
-    private const string _defaultUserAgent = "NSTN/3.62.475170463.release Dalvik/2.1.0 (Linux; U; Android 12) Mobile";
+    //private const string _defaultUserAgent = "NSTN/3.62.475170463.release Dalvik/2.1.0 (Linux; U; Android 12) Mobile";
+    private const string _defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36";
     private static readonly Uri _defaultBaseAddress = new(DefaultApiEndpoint);
 
     private readonly HttpClient _httpClient;
@@ -56,14 +57,41 @@ public class GoogleScraper : IDisposable
         GScraperGuards.NotNull(client, nameof(client));
         GScraperGuards.NotNull(apiEndpoint, nameof(apiEndpoint));
 
-        _httpClient.BaseAddress = apiEndpoint;
+        if (client.BaseAddress is null)
+        {
+            try
+            {
+                client.BaseAddress = apiEndpoint;
+            }
+            catch (InvalidOperationException)
+            {
+                // HttpClient already started a request, can't set BaseAddress anymore.
+                // We'll use absolute URLs instead.
+            }
+        }
 
-        if (_httpClient.DefaultRequestHeaders.UserAgent.Count == 0)
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
+        if (client.DefaultRequestHeaders.UserAgent.Count == 0)
+        {
+            try
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd(_defaultUserAgent);
+            }
+            catch (InvalidOperationException)
+            {
+                // HttpClient already started a request, can't modify headers anymore.
+            }
+        }
 
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.5");
-        _httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0OTA3Nzk3MjMaAmVuIAEaBgiA_LysBg");
+        try
+        {
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.5");
+            client.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0OTA3Nzk3MjMaAmVuIAEaBgiA_LysBg");
+        }
+        catch (InvalidOperationException)
+        {
+            // HttpClient already started a request, can't modify headers anymore.
+        }
     }
 
     /// <summary>
@@ -88,7 +116,7 @@ public class GoogleScraper : IDisposable
         // TODO: Use pagination
         GScraperGuards.NotNull(query, nameof(query));
 
-        var uri = new Uri(BuildImageQuery(query, safeSearch, size, color, type, time, license, language), UriKind.Relative);
+        var uri = new Uri(_httpClient.BaseAddress ?? _defaultBaseAddress, BuildImageQuery(query, safeSearch, size, color, type, time, license, language));
 
         byte[] bytes = await _httpClient.GetByteArrayAsync(uri).ConfigureAwait(false);
         var images = JsonSerializer.Deserialize(bytes.AsSpan(5, bytes.Length - 5), GoogleImageSearchResponseContext.Default.GoogleImageSearchResponse)!.Ischj.Metadata;
